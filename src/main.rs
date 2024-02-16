@@ -1,7 +1,16 @@
 use std::env;
 
+use axum::Router;
+use log::{error, info};
+
 use dotenv::dotenv;
-use serenity::{all::Message, async_trait, client::EventHandler, prelude::*};
+use serenity::{
+    all::{CurrentUser, Interaction, Message, Ready},
+    async_trait,
+    client::EventHandler,
+    prelude::*,
+};
+use tokio::net::TcpListener;
 
 struct ClientHandler;
 
@@ -22,11 +31,38 @@ impl EventHandler for ClientHandler {
             _ => {}
         }
     }
+
+    async fn interaction_create(&self, _: Context, interaction: Interaction) {
+        info!("Interaction: {:?}", interaction);
+    }
+
+    async fn ready(&self, _: Context, ready: Ready) {
+        let user_info = Self::user_display_format(&ready.user);
+
+        info!("DISCORD: {} is up", user_info);
+
+        for guild in ready.guilds {
+            info!(
+                "DISCORD: {} is connected to guild: id({})",
+                user_info, guild.id
+            )
+        }
+    }
+}
+
+impl ClientHandler {
+    fn user_display_format(user: &CurrentUser) -> String {
+        format!("{}({})", user.name, user.id)
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
+
+    env_logger::init();
+
+    info!("Starting up");
 
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
 
@@ -34,9 +70,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .event_handler(ClientHandler)
         .await?;
 
-    if let Err(why) = client.start().await {
-        println!("Client error: {:?}", why);
-    }
+    let discord_bot = tokio::spawn(async move {
+        if let Err(why) = client.start().await {
+            error!("DISCORD: {:?}", why);
+        }
+    });
+
+    let app = Router::new();
+
+    let listener = TcpListener::bind("0.0.0.0:3000").await?;
+
+    axum::serve(listener, app).await?;
+
+    discord_bot.await?;
 
     Ok(())
 }

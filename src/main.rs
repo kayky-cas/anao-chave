@@ -142,7 +142,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let server = tokio::spawn(async move {
         info!("HTTP: Listening on");
-        axum::serve(listener, app).await
+        if let Err(err) = axum::serve(listener, app).await {
+            error!("HTTP: {:?}", err);
+        }
     });
 
     let _ = tokio::join!(server, discord_bot);

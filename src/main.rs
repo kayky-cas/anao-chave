@@ -12,14 +12,16 @@ use log::{error, info};
 
 use dotenv::dotenv;
 use serenity::{
-    all::{CurrentUser, Interaction, Message, Ready},
+    all::{CommandInteraction, CurrentUser, Interaction, Message, Ready},
     async_trait,
-    builder::{CreateInteractionResponse, CreateInteractionResponseMessage},
+    builder::CreateInteractionResponse,
     client::EventHandler,
     interactions_endpoint::Verifier,
     prelude::*,
 };
 use tokio::net::TcpListener;
+use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
 
 struct ClientHandler;
 
@@ -69,6 +71,10 @@ struct AnaoChaveState {
     verifier: Verifier,
 }
 
+fn handle_command(_command: CommandInteraction) -> CreateInteractionResponse {
+    todo!()
+}
+
 async fn handle_interaction(
     headers: HeaderMap,
     State(state): State<Arc<AnaoChaveState>>,
@@ -90,12 +96,7 @@ async fn handle_interaction(
 
     let response = match serde_json::from_slice(&body).or(Err(StatusCode::UNPROCESSABLE_ENTITY))? {
         Interaction::Ping(_) => CreateInteractionResponse::Pong,
-        Interaction::Command(command) => match command.data.name.as_str() {
-            "ping" => CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new().content("Pong!"),
-            ),
-            name => todo!("Unknown command: {}", name),
-        },
+        Interaction::Command(command) => handle_command(command),
         Interaction::Autocomplete(_) => todo!(),
         Interaction::Component(_) => todo!(),
         Interaction::Modal(_) => todo!(),
@@ -134,7 +135,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/interactions", post(handle_interaction))
-        .with_state(state);
+        .with_state(state)
+        .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
 
     let listener = TcpListener::bind("0.0.0.0:3000").await?;
 

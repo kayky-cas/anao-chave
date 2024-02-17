@@ -1,13 +1,22 @@
-use std::env;
+use std::{env, sync::Arc};
 
-use axum::Router;
+use axum::{
+    body::Bytes,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::post,
+    Json, Router,
+};
 use log::{error, info};
 
 use dotenv::dotenv;
 use serenity::{
     all::{CurrentUser, Interaction, Message, Ready},
     async_trait,
+    builder::{CreateInteractionResponse, CreateInteractionResponseMessage},
     client::EventHandler,
+    interactions_endpoint::Verifier,
     prelude::*,
 };
 use tokio::net::TcpListener;
@@ -56,6 +65,46 @@ impl ClientHandler {
     }
 }
 
+struct AnaoChaveState {
+    verifier: Verifier,
+}
+
+async fn handle_interaction(
+    headers: HeaderMap,
+    State(state): State<Arc<AnaoChaveState>>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let signature = headers
+        .get("X-Signature-Ed25519")
+        .and_then(|t| t.to_str().ok())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let timestamp = headers
+        .get("X-Signature-Timestamp")
+        .and_then(|t| t.to_str().ok())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    if state.verifier.verify(signature, timestamp, &body).is_err() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let response = match serde_json::from_slice(&body).or(Err(StatusCode::UNPROCESSABLE_ENTITY))? {
+        Interaction::Ping(_) => CreateInteractionResponse::Pong,
+        Interaction::Command(command) => match command.data.name.as_str() {
+            "ping" => CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new().content("Pong!"),
+            ),
+            name => todo!("Unknown command: {}", name),
+        },
+        Interaction::Autocomplete(_) => todo!(),
+        Interaction::Component(_) => todo!(),
+        Interaction::Modal(_) => todo!(),
+        _ => todo!(),
+    };
+
+    Ok(Json(response))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
@@ -65,24 +114,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting up");
 
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
+    let public_key =
+        env::var("DISCORD_PUBLIC_KEY").expect("Expected a public key in the environment");
 
     let mut client = Client::builder(token, GatewayIntents::default())
         .event_handler(ClientHandler)
         .await?;
 
     let discord_bot = tokio::spawn(async move {
+        info!("DISCORD: Starting client");
         if let Err(why) = client.start().await {
             error!("DISCORD: {:?}", why);
         }
     });
 
-    let app = Router::new();
+    let state = Arc::new(AnaoChaveState {
+        verifier: Verifier::new(&public_key),
+    });
+
+    let app = Router::new()
+        .route("/interactions", post(handle_interaction))
+        .with_state(state);
 
     let listener = TcpListener::bind("0.0.0.0:3000").await?;
 
-    axum::serve(listener, app).await?;
+    let server = tokio::spawn(async move {
+        info!("HTTP: Listening on");
+        axum::serve(listener, app).await
+    });
 
-    discord_bot.await?;
+    let _ = tokio::join!(server, discord_bot);
 
     Ok(())
 }

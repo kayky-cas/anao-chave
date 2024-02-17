@@ -138,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state)
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
 
-    let listener = TcpListener::bind("0.0.0.0:3000").await?;
+    let listener = TcpListener::bind("127.0.0.1:3000").await?;
 
     let server = tokio::spawn(async move {
         info!("HTTP: Listening on");

@@ -12,9 +12,9 @@ use log::{error, info};
 
 use dotenv::dotenv;
 use serenity::{
-    all::{CommandInteraction, CurrentUser, Interaction, Message, Ready},
+    all::{CommandInteraction, CommandOptionType, CurrentUser, Interaction, Message, Ready},
     async_trait,
-    builder::CreateInteractionResponse,
+    builder::{CreateCommand, CreateCommandOption, CreateInteractionResponse},
     client::EventHandler,
     interactions_endpoint::Verifier,
     prelude::*,
@@ -47,7 +47,7 @@ impl EventHandler for ClientHandler {
         info!("Interaction: {:?}", interaction);
     }
 
-    async fn ready(&self, _: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         let user_info = Self::user_display_format(&ready.user);
 
         info!("DISCORD: {} is up", user_info);
@@ -56,7 +56,20 @@ impl EventHandler for ClientHandler {
             info!(
                 "DISCORD: {} is connected to guild: id({})",
                 user_info, guild.id
-            )
+            );
+
+            let _ = guild
+                .id
+                .set_commands(
+                    &ctx.http,
+                    vec![CreateCommand::new("ping")
+                        .description("Responde com pong")
+                        .add_option(
+                            CreateCommandOption::new(CommandOptionType::String, "", "none")
+                                .required(true),
+                        )],
+                )
+                .await;
         }
     }
 }
@@ -118,7 +131,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let public_key =
         env::var("DISCORD_PUBLIC_KEY").expect("Expected a public key in the environment");
 
-    let mut client = Client::builder(token, GatewayIntents::default())
+    let intents = GatewayIntents::GUILDS
+        | GatewayIntents::MESSAGE_CONTENT
+        | GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::GUILD_MESSAGE_REACTIONS;
+
+    let mut client = Client::builder(token, intents)
         .event_handler(ClientHandler)
         .await?;
 
